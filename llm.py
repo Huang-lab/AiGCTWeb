@@ -1,6 +1,6 @@
-"""Groq client factory, system prompt, and the tool-use agent loop.
+"""llama-cpp-python client factory, system prompt, and the tool-use agent loop.
 
-Groq exposes an OpenAI-compatible chat-completions API with function calling.
+Runs a local GGUF model in-process — no background server required.
 The conversation in `messages` is kept in OpenAI message format (the system
 prompt is prepended at call time, not stored).
 """
@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import json
 
-from groq import Groq
+from llama_cpp import Llama
 
 import aigct_tools
 
-# Groq model with reliable tool-calling on the free tier. If Groq retires this
-# id, pick a current one from https://console.groq.com/docs/models.
-MODEL = "llama-3.3-70b-versatile"
+# Path to a GGUF model that supports tool calling (Llama 3.1/3.3 recommended).
+# Download example (requires huggingface-cli):
+#   huggingface-cli download bartowski/Meta-Llama-3.1-8B-Instruct-GGUF \
+#       Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf --local-dir .
+MODEL_PATH = "./model/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
 MAX_TOKENS = 1024
 
 SYSTEM_PROMPT = """\
@@ -47,11 +49,16 @@ VEPs and their AUCs, and note the task/gene you used.
 """
 
 
-def make_client(api_key: str) -> Groq:
-    return Groq(api_key=api_key)
+def make_client() -> Llama:
+    return Llama(
+        model_path=MODEL_PATH,
+        chat_format="chatml-function-calling",
+        n_ctx=4096,
+        verbose=False,
+    )
 
 
-def run_turn(client: Groq, messages: list, query_mgr):
+def run_turn(client: Llama, messages: list, query_mgr):
     """Run one user turn through the tool-use loop.
 
     Mutates `messages` (OpenAI format, no system message) in place with the
@@ -61,49 +68,53 @@ def run_turn(client: Groq, messages: list, query_mgr):
     tables = []
 
     while True:
-        response = client.chat.completions.create(
-            model=MODEL,
+        # llama-cpp-python returns plain dicts, not attribute objects.
+        response = client.create_chat_completion(
             max_tokens=MAX_TOKENS,
             messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
             tools=aigct_tools.TOOL_SCHEMAS,
             tool_choice="auto",
         )
-        msg = response.choices[0].message
+        msg = response["choices"][0]["message"]
 
-        if not msg.tool_calls:
-            text = msg.content or ""
+        if not msg.get("tool_calls"):
+            text = msg.get("content") or ""
             messages.append({"role": "assistant", "content": text})
             return text, tables
 
         # Append the assistant turn carrying the tool calls (serializable form).
-        messages.append({
-            "role": "assistant",
-            "content": msg.content or "",
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in msg.tool_calls
-            ],
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": msg.get("content") or "",
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                        },
+                    }
+                    for tc in msg["tool_calls"]
+                ],
+            }
+        )
 
-        for tc in msg.tool_calls:
+        for tc in msg["tool_calls"]:
             try:
-                args = json.loads(tc.function.arguments or "{}")
+                args = json.loads(tc["function"]["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
             title, df, result_text = aigct_tools.dispatch(
-                tc.function.name, args, query_mgr
+                tc["function"]["name"], args, query_mgr
             )
             if df is not None:
                 tables.append((title, df))
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result_text,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result_text,
+                }
+            )

@@ -30,7 +30,7 @@ def get_query_mgr():
 
 @st.cache_resource
 def get_client():
-    return llm.make_client(st.secrets["GROQ_API_KEY"])
+    return llm.make_client()
 
 
 def render_history():
