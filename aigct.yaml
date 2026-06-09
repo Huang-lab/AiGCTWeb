@@ -1,0 +1,69 @@
+---
+# aigct configuration for the aigctweb chat app.
+# Only the SQLite db is actually used by the two query methods this app calls;
+# repository.root_dir is required by the container constructor but never read
+# for those methods. log.dir / output_dir point at an ephemeral temp path
+# (Streamlit Community Cloud disks are ephemeral and /tmp is writable).
+
+log:
+  dir: /tmp/aigct/log
+
+output_dir: /tmp/aigct/output
+
+repository:
+  # Unused by get_score_source_roc_auc_by_task /
+  # get_score_source_gene_roc_auc_by_task_gene, but the container needs a value.
+  root_dir: db
+  source_url: ""
+  version: 0.1.0
+
+db:
+  # Relative to the app's working directory (repo root) on deploy.
+  url: "sqlite:///db/aigct.db"
+
+plot:
+  line_width: 2
+  line_style: solid
+  user_ves_color: red
+  sys_ves_colors:
+    - maroon
+    - darkkhaki
+    - sandybrown
+    - orange
+    - yellow
+    - green
+    - lime
+    - aqua
+    - blue
+    - violet
+  file_dpi: 300
+  bbox_inches: tight
+  roc_pr_line:
+    num_curves_per_plot: 100
+    roc_title: ROC Curve
+    pr_title: Precision/Recall
+    x_axis_font_size: 25
+    y_axis_font_size: 25
+    label_size: 20
+    title_font_size: 30
+    legend_font_size: 10
+    legend_line_width: 3.0
+  mwu_bar:
+    num_bars_per_plot: 100
+    title: Mann Whitney U
+    title_font_size: 20
+    y_label_font_size: 15
+    x_label_font_size: 15
+    y_tick_label_size: 15
+    x_tick_label_size: 8
+    xtick_rotation: 60
+    xtick_rotation_mode: anchor
+  calibration_line:
+    pathogenic_fraction_title: Pathogenic Fraction by Score
+    metrics_vs_threshold_title: Metrics vs Threshold
+    x_axis_font_size: 25
+    y_axis_font_size: 25
+    label_size: 20
+    title_font_size: 30
+    legend_font_size: 10
+    legend_line_width: 3.0

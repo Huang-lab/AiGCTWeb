@@ -1,0 +1,38 @@
+@startuml
+title AIGCT Architecture - Interaction Diagram (Horizontal Layout)
+
+' --- FIXES FOR LABEL VISIBILITY ---
+skinparam sequenceParticipantSpacing 90
+skinparam sequenceMessageAlignment left
+skinparam sequenceMessageFontSize 12
+
+skinparam defaultFontStyle bold
+skinparam defaultFontSize 14
+skinparam sequence {
+  ParticipantBorderColor #336699
+  ParticipantBackgroundColor #eef7ff
+  LifeLineBorderColor #336699
+  LifeLineBackgroundColor #eef7ff
+  ArrowColor #333333
+}
+
+' --- PARTICIPANTS ---
+participant "Browser / User" as Browser
+participant "Streamlit App\n(app.py)" as Streamlit
+participant "Groq LLM" as Groq
+participant "Tool Layer\n(aigct_tools.py)" as Tools
+participant "Query Manager\n(VEBenchmarkContainer)\n(SQLite DB)" as QM
+
+' --- INTERACTIONS ---
+Browser -> Streamlit : 1. submit question
+Streamlit -> Groq : 2. send request\n(system prompt + history + tools)
+Groq -> Streamlit : 3. tool-call reply
+Streamlit -> Tools : 4. dispatch tool call
+Tools -> QM : 5. execute query
+QM -> Tools : 6. DataFrame result
+Tools -> Streamlit : 7. markdown + table
+Streamlit -> Groq : 8. send tool result back to LLM
+Groq -> Streamlit : 9. final text summary
+Streamlit -> Browser : 10. render summary + table
+
+@enduml
