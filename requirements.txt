@@ -1,0 +1,6 @@
+streamlit
+groq
+pandas
+sqlalchemy
+tabulate
+./vendor/aigct-1.0.1-py3-none-any.whl

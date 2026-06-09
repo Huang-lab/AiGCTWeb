@@ -1,0 +1,62 @@
+Draw.io Instructions for AIGCT Architecture Diagram
+
+1. Open draw.io / diagrams.net and create a new blank diagram.
+
+2. Add six rounded rectangle shapes, arranged vertically in a single column with enough spacing between them.
+   - Label the top shape: "Browser / User"
+   - Label the next shape: "Streamlit App\n(app.py)"
+   - Label the next shape: "Groq LLM"
+   - Label the next shape: "Tool Layer\n(aigct_tools.py)"
+   - Label the next shape: "Query Manager\n(VEBenchmarkContainer)"
+   - Label the bottom shape: "SQLite DB\n(db/aigct.db)"
+
+3. Style the boxes to improve readability:
+   - Use a light fill color for every shape.
+   - Use a bold font or larger font size for each label.
+   - Keep the boxes the same width, but allow height to fit the text.
+
+4. Connect the boxes with arrows in this order:
+   - Browser / User -> Streamlit App (downward)
+   - Streamlit App -> Groq LLM (downward)
+   - Groq LLM -> Streamlit App (rightward/looping back)
+   - Streamlit App -> Tool Layer (downward)
+   - Tool Layer -> Query Manager (downward)
+   - Query Manager -> SQLite DB (downward)
+   - SQLite DB -> Query Manager (upward)
+   - Query Manager -> Tool Layer (upward)
+   - Tool Layer -> Streamlit App (rightward/looping back)
+   - Streamlit App -> Groq LLM (rightward/looping back) [SECOND request with tool result]
+   - Groq LLM -> Streamlit App (rightward/looping back) [final text response]
+   - Streamlit App -> Browser / User (upward)
+
+5. Label the arrows clearly with the main message or action for each step:
+   - Browser / User -> Streamlit App: "1. submit question"
+   - Streamlit App -> Groq LLM: "2. send request (with system prompt + history + tools)"
+   - Groq LLM -> Streamlit App: "3. tool-call reply"
+   - Streamlit App -> Tool Layer: "4. dispatch tool call"
+   - Tool Layer -> Query Manager: "5. execute query"
+   - Query Manager -> SQLite DB: "6. read benchmark rows"
+   - SQLite DB -> Query Manager: "7. return rows"
+   - Query Manager -> Tool Layer: "8. DataFrame result"
+   - Tool Layer -> Streamlit App: "9. markdown + table"
+   - Streamlit App -> Groq LLM: "10. send tool result back to LLM (critical loop step)"
+   - Groq LLM -> Streamlit App: "11. final text summary"
+   - Streamlit App -> Browser / User: "12. render summary + table"
+
+6. If the diagram becomes visually crowded, simplify by using fewer labels or placing the text labels outside the arrows.
+   - Example: place the arrow labels next to the arrows instead of inside them.
+
+7. Add a legend or note box on the right side of the page with these key points:
+   - "Streamlit app maintains session state and orchestrates the tool-use loop."
+   - "Groq is initially called with system prompt, history, and tool schemas."
+   - "When Groq returns a tool call, Streamlit executes the tool and sends the result back to Groq."
+   - "Groq then generates a final text summary based on the tool result."
+   - "Tool layer runs the selected query and formats the result as markdown + table."
+   - "Query manager reads benchmark data from the local SQLite database."
+
+8. Make final layout adjustments:
+   - Align the boxes vertically and center them on the page.
+   - Ensure arrowheads do not overlap other shapes.
+   - Increase font size if necessary so all text is easy to read.
+
+9. Save or export the diagram as PNG or SVG once the layout is clear and readable.
