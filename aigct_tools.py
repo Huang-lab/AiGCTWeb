@@ -1,6 +1,6 @@
 """Tool layer over the aigct query_mgr.
 
-Two pure functions ((query_mgr, args) -> DataFrame) plus the Anthropic tool
+Two pure functions ((query_mgr, args) -> DataFrame) plus the Open AI / Groq function-calling
 schemas and a serializer for tool results. Written so they could be lifted into
 a standalone MCP server later with no change to the query logic.
 
