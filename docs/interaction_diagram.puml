@@ -21,7 +21,7 @@ participant "Browser / User" as Browser
 participant "Streamlit App\n(app.py)" as Streamlit
 participant "Groq LLM" as Groq
 participant "Tool Layer\n(aigct_tools.py)" as Tools
-participant "Query Manager\n(VEBenchmarkContainer)\n(SQLite DB)" as QM
+participant "AIGCT Query Manager\n(SQLite DB)" as QM
 
 ' --- INTERACTIONS ---
 Browser -> Streamlit : 1. submit question
