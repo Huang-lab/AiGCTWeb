@@ -56,6 +56,8 @@ def main():
         st.session_state.history = []
     if "show_about" not in st.session_state:
         st.session_state.show_about = False
+    if "pending_prompt" not in st.session_state:
+        st.session_state.pending_prompt = None
 
     with st.sidebar:
         if st.button("About"):
@@ -86,7 +88,8 @@ def main():
 
         st.subheader("Example questions")
         for ex in EXAMPLES:
-            st.markdown(f"- {ex}")
+            if st.button(ex, use_container_width=True):
+                st.session_state.pending_prompt = ex
         st.divider()
         if st.button("Clear conversation"):
             st.session_state.messages = []
@@ -96,6 +99,9 @@ def main():
     render_history()
 
     prompt = st.chat_input("Ask about VEP performance…")
+    if not prompt and st.session_state.pending_prompt:
+        prompt = st.session_state.pending_prompt
+        st.session_state.pending_prompt = None
     if not prompt:
         return
 
