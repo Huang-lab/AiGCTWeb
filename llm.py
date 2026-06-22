@@ -8,10 +8,33 @@ prompt is prepended at call time, not stored).
 from __future__ import annotations
 
 import json
+import re
+import uuid
 
-from groq import Groq
+from groq import BadRequestError, Groq
 
 import aigct_tools
+
+# Matches legacy function-call formats that some Groq model generations produce
+# instead of proper JSON tool calls, e.g.:
+#   <function=name({"arg": "val"})></function>
+#   <function=name[]{"arg": "val"}</function>
+# Strategy: capture the function name, then find the first {...} in the tag.
+_LEGACY_FN_RE = re.compile(r"<function=(\w+)[^{]*(\{.+?\})[^<]*</function>", re.DOTALL)
+
+
+def _parse_legacy_tool_call(failed_generation: str) -> dict | None:
+    """Extract a tool call from Groq's legacy function-call format, or None."""
+    m = _LEGACY_FN_RE.search(failed_generation)
+    if not m:
+        return None
+    name, args_str = m.group(1), m.group(2)
+    try:
+        json.loads(args_str)  # validate JSON before using it
+    except json.JSONDecodeError:
+        return None
+    return {"id": f"call_{uuid.uuid4().hex[:8]}", "name": name, "arguments": args_str}
+
 
 # Groq model with reliable tool-calling on the free tier. If Groq retires this
 # id, pick a current one from https://console.groq.com/docs/models.
@@ -44,6 +67,8 @@ results (e.g. an unrecognized gene), ask the user to clarify rather than guessin
 - The full results table is rendered to the user separately, so do NOT repeat the \
 whole table in your reply. Give a brief (1-3 sentence) summary naming the top few \
 VEPs and their AUCs, and note the task/gene you used.
+- IMPORTANT: when calling a tool, arguments MUST be valid JSON enclosed in curly \
+braces. Never use any other format for tool arguments.
 """
 
 
@@ -61,13 +86,55 @@ def run_turn(client: Groq, messages: list, query_mgr):
     tables = []
 
     while True:
-        response = client.chat.completions.create(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-            tools=aigct_tools.TOOL_SCHEMAS,
-            tool_choice="auto",
-        )
+        try:
+            response = client.chat.completions.create(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                tools=aigct_tools.TOOL_SCHEMAS,
+                tool_choice="auto",
+            )
+        except BadRequestError as exc:
+            # Groq rejects its own model output when the model emits the legacy
+            # <function=name(args)></function> format instead of JSON tool calls.
+            # Parse the failed generation and synthesise a proper tool call so
+            # the loop can continue normally.
+            body = exc.body or {}
+            err = body.get("error", {}) if isinstance(body, dict) else {}
+            if err.get("code") == "tool_use_failed":
+                legacy = _parse_legacy_tool_call(err.get("failed_generation", ""))
+                if legacy:
+                    fake_tc = {
+                        "id": legacy["id"],
+                        "type": "function",
+                        "function": {
+                            "name": legacy["name"],
+                            "arguments": legacy["arguments"],
+                        },
+                    }
+                    messages.append(
+                        {"role": "assistant", "content": "", "tool_calls": [fake_tc]}
+                    )
+                    for tc_dict in [fake_tc]:
+                        try:
+                            args = json.loads(tc_dict["function"]["arguments"])
+                        except json.JSONDecodeError:
+                            args = {}
+                        title, df, result_text = aigct_tools.dispatch(
+                            tc_dict["function"]["name"], args, query_mgr
+                        )
+                        if df is not None:
+                            tables.append((title, df))
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_dict["id"],
+                                "content": result_text,
+                            }
+                        )
+                    continue  # re-enter loop so the model can summarise
+            raise  # re-raise if we can't handle it
+
         msg = response.choices[0].message
 
         if not msg.tool_calls:
@@ -76,21 +143,23 @@ def run_turn(client: Groq, messages: list, query_mgr):
             return text, tables
 
         # Append the assistant turn carrying the tool calls (serializable form).
-        messages.append({
-            "role": "assistant",
-            "content": msg.content or "",
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in msg.tool_calls
-            ],
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
+        )
 
         for tc in msg.tool_calls:
             try:
@@ -102,8 +171,10 @@ def run_turn(client: Groq, messages: list, query_mgr):
             )
             if df is not None:
                 tables.append((title, df))
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result_text,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result_text,
+                }
+            )
