@@ -1,0 +1,14 @@
+[Unit]
+Description=aigctweb FastAPI app
+After=network.target ollama.service
+Requires=ollama.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/aigctweb
+ExecStart=/home/ubuntu/aigctweb/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

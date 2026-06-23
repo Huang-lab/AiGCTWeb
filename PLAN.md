@@ -1,10 +1,9 @@
-# Plan: AIGCT Chat Web App (Streamlit + Claude)
+# Plan: AIGCT Chat Web App (FastAPI + Ollama + Oracle Cloud)
 
 ## Goal
 A chat web app where researchers ask natural-language questions about variant
-effect predictor (VEP) performance. Claude does **not** know answers — it
-translates each question into a call to one of two `aigct` query methods, then
-the app renders the returned DataFrame as a table sorted by AUC descending.
+effect predictor (VEP) performance. An LLM answers by tool-calling the `aigct`
+package's `query_mgr` methods and rendering a ranked AUC table.
 
 Example questions:
 - "Top performing VEPs for predicting pathogenicity of variants in the PTEN gene for cancer." → gene method
@@ -29,156 +28,188 @@ Example questions:
 - venv is `.venv_aigweb` (uv-managed, no pip → `VIRTUAL_ENV=.venv_aigweb uv pip install ...`).
 
 ## Architecture
-One Streamlit process holds everything in memory:
+
+### Compute
+Oracle Cloud Free Tier — **Ampere A1 ARM** instance: 4 OCPUs + 24 GB RAM.
+Enough to run a 7B quantized model on CPU (~5 GB) alongside the app.
+
+### Stack
 ```
-Browser (Streamlit React client over WebSocket)
-        │
-        ▼
-app.py  (server-side Python, re-runs per message)
-  ├─ anthropic.Anthropic client            ← @st.cache_resource
-  ├─ VEBenchmarkContainer("aigct.yaml")    ← @st.cache_resource → query_mgr → db/aigct.db (6.2MB)
-  └─ tool functions (aigct_tools.py)
-        get_top_veps_for_task(task_code)
-        get_top_veps_for_task_gene(task_code, gene_symbol)
+Browser (N users)
+    |  HTTP + Server-Sent Events (streaming)
+    v
+FastAPI  (Python, Uvicorn)
+  +-- per-session chat history (in-memory dict, keyed by session cookie)
+  +-- aigct_tools.py          <- unchanged query/tool layer
+  +-- VEBenchmarkContainer    <- loaded once at startup (read-only, shared)
+  +-- Ollama client (httpx to localhost:11434)
+        |
+        v
+Ollama  (localhost:11434, systemd service)
+  +-- model: qwen2.5:7b  (best tool-calling at this size, ~5 GB RAM)
+        |
+        v
+db/aigct.db  (6.2 MB SQLite, read-only)
 ```
 
-**Request flow (Claude tool-use loop):**
-1. Send conversation + tool schemas to Claude.
-2. Claude returns prose or a `tool_use` block (method + args).
-3. App executes the matching Python fn → `query_mgr` → SQLite → DataFrame.
-4. App sorts by `auc` desc, returns a compact representation to Claude as `tool_result`.
-5. Claude writes a short NL summary.
-6. App renders `st.dataframe(sorted_df)` + `st.markdown(summary)`.
+### Request flow
+1. User message → FastAPI handler appends to session history.
+2. POST to Ollama `/v1/chat/completions` with tool schemas (OpenAI format).
+3. Ollama returns prose or a `tool_use` block (function + args).
+4. App dispatches to matching `aigct_tools.py` fn → `query_mgr` → SQLite → DataFrame.
+5. DataFrame sorted by `auc` desc; compact markdown representation returned as `tool` message.
+6. Ollama writes a short NL summary.
+7. Response streamed back to browser via SSE; table rendered client-side from JSON payload.
+
+### Why these choices
+
+| Concern | Choice | Reason |
+|---|---|---|
+| Multi-user | FastAPI | Async; handles concurrent requests. Streamlit re-runs per user per message — not suited for multi-user. |
+| Streaming | Server-Sent Events | Simple, unidirectional, no WebSocket overhead. |
+| Frontend | htmx + Jinja2 | Zero build step; SSE support built-in; no JS framework needed. |
+| Local LLM | Ollama | One-command ARM install; OpenAI-compatible API (drop-in for Groq client). |
+| Model | qwen2.5:7b | Best tool/function-calling of small models; ~5 GB RAM leaving 19 GB for OS + app. |
+| Session state | In-memory dict | Sufficient for low traffic; can swap to SQLite later if persistence needed. |
+
+### Concurrency note
+Ollama processes one generation at a time on CPU. At ~10–20 tok/s on 4 ARM cores,
+a queue of 2–3 simultaneous users is fine for a research tool with modest traffic.
+
+## Process management (systemd)
+
+Ollama installs its own systemd service automatically:
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+systemctl enable ollama
+systemctl start ollama
+ollama pull qwen2.5:7b
+```
+
+FastAPI app service (`/etc/systemd/system/aigctweb.service`):
+```ini
+[Unit]
+Description=aigctweb FastAPI app
+After=network.target ollama.service
+Requires=ollama.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/aigctweb
+ExecStart=/home/ubuntu/aigctweb/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+App startup health-checks Ollama before accepting requests:
+```python
+@app.on_event("startup")
+async def wait_for_ollama():
+    import httpx, asyncio
+    for _ in range(30):
+        try:
+            async with httpx.AsyncClient() as c:
+                await c.get("http://localhost:11434/api/tags", timeout=2)
+            return
+        except Exception:
+            await asyncio.sleep(1)
+    raise RuntimeError("Ollama not ready after 30s")
+```
 
 ## Project structure
 ```
 aigctweb/
-├── app.py                  # Streamlit UI + Claude tool-use loop
-├── aigct_tools.py          # 2 tool fns + JSON tool schemas + DataFrame formatting
-├── llm.py                  # Anthropic client factory + system prompt + agent loop
-├── aigct.yaml              # aigct config pointing at db/aigct.db (relative path)
-├── db/
-│   └── aigct.db            # bundled 6.2 MB SQLite repo (committed)  ✅ already copied
-├── vendor/
-│   └── aigct-1.0.1-py3-none-any.whl   # vendored aigct wheel (committed)  ✅ already copied
-├── requirements.txt
-├── .streamlit/
-│   ├── config.toml         # theme/server options
-│   └── secrets.toml        # local only (gitignored): ANTHROPIC_API_KEY
-└── README.md
++-- app.py                  # FastAPI app: routes, SSE, session management
++-- llm.py                  # Ollama client (openai SDK, base_url=localhost:11434), system prompt, run_turn()
++-- aigct_tools.py          # 2 tool fns + OpenAI tool schemas + DataFrame formatting  [reuse as-is]
++-- aigct.yaml              # aigct config pointing at db/aigct.db
++-- templates/
+|   +-- index.html          # Jinja2 chat UI with htmx + SSE
++-- db/
+|   +-- aigct.db            # bundled 6.2 MB SQLite repo (committed)
++-- vendor/
+|   +-- aigct-1.0.1-py3-none-any.whl
++-- requirements.txt
++-- aigctweb.service        # systemd unit file (reference copy)
++-- README.md
 ```
 
 ## Implementation steps
 
 ### 1. Dependencies (`requirements.txt`)
 ```
-streamlit
-anthropic
+fastapi
+uvicorn[standard]
+httpx
+openai              # used as Ollama client (base_url override)
+jinja2
+python-multipart    # for form parsing
 pandas
-tabulate            # if df.to_markdown() is used for tool_result
-./vendor/aigct-1.0.1-py3-none-any.whl   # vendored wheel (LOCKED decision)
+tabulate
+./vendor/aigct-1.0.1-py3-none-any.whl
 ```
-- aigct isn't on PyPI. **Decision (locked):** vendor the wheel in `vendor/` and
-  reference it by relative path in `requirements.txt`. Community Cloud installs
-  it from the committed file — no git auth needed. Revisit only if a second
-  consumer or a public release appears.
 
 ### 2. aigct config (`aigct.yaml`)
-- `db.url: "sqlite:///db/aigct.db"` (relative to app working dir).
-- `repository.root_dir`: any path (unused by our methods) — point at `db/` or a placeholder.
-- `log.dir` / `output_dir`: a writable temp path (e.g. `/tmp/aigct` — hosts have ephemeral disk).
-- Full `plot` block copied from the verified sample config.
+Unchanged from current build — relative `db.url: sqlite:///db/aigct.db`,
+full plot block, log/output under `/tmp/aigct`.
 
 ### 3. Tool layer (`aigct_tools.py`)
-- `get_container(config_path)` — build `VEBenchmarkContainer(config_path)` once
-  (wrapped by `@st.cache_resource` in app.py).
-- `get_top_veps_for_task(query_mgr, task_code) -> pd.DataFrame` — calls method 1,
-  returns `[score_source, auc, num_positive, num_negative]` sorted by `auc` desc.
-- `get_top_veps_for_task_gene(query_mgr, task_code, gene_symbol) -> pd.DataFrame`
-  — calls method 2, same cols **+ `gene_symbol`**, sorted by `auc` desc.
-- `TOOL_SCHEMAS` — Anthropic tool-use JSON schema for both fns. Param
-  descriptions enumerate valid `task_code` values; `gene_symbol` is an official
-  HGNC symbol (e.g. `PTEN`).
-- `df_to_tool_result(df)` — compact, token-bounded serialization (e.g.
-  `df.head(n).to_markdown()` or records JSON) sent to Claude. Full DataFrame kept
-  in Python for display.
+Reuse as-is. `TOOL_SCHEMAS` is already in OpenAI function-calling format
+(written for Groq, which is the same format Ollama expects).
 
 ### 4. LLM agent loop (`llm.py`)
-- `make_client()` → `anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])`.
-- `SYSTEM_PROMPT` — role; TASK_CODE↔disease mapping; rule: use the gene method
-  **iff** a specific gene is named, else the task method; always present results
-  as a table sorted by descending `auc`; if disease/gene unrecognized, ask the
-  user to clarify rather than guess.
-- `run_turn(client, messages, query_mgr)` — tool-use loop: call Claude → if
-  `stop_reason == "tool_use"`, dispatch to the matching fn, append `tool_result`,
-  loop; else return final text. Returns both the assistant text and any
-  DataFrame, so the UI can render the table.
-- Default model: **`claude-opus-4-8`** (LOCKED) — a module constant.
+- `make_client()` → `openai.OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")`.
+- `MODEL = "qwen2.5:7b"` — module constant.
+- `SYSTEM_PROMPT` — unchanged role + TASK_CODE mapping.
+- `run_turn(client, messages, query_mgr)` — same tool-use loop as Groq version
+  (OpenAI message format, already implemented).
 
-### 5. Streamlit UI (`app.py`)
-- `@st.cache_resource` wrappers for the Anthropic client and the aigct container.
-- `st.session_state["messages"]` holds chat history (Anthropic message format).
-- Render history with `st.chat_message`; input via `st.chat_input`.
-- On submit: append user msg → `run_turn(...)` → render returned DataFrame with
-  `st.dataframe(df)` and summary with `st.markdown`. Persist a serializable
-  record of each table so reruns redraw it.
-- Spinner during the round-trip; surface tool/query errors as a chat message
-  instead of crashing.
+### 5. FastAPI app (`app.py`)
+- Load `VEBenchmarkContainer` once at startup (module-level, not per-request).
+- Session store: `dict[session_id, list[messages]]` in module scope.
+- `GET /` → render `templates/index.html`.
+- `POST /chat` → append user message, call `run_turn()`, return JSON
+  `{text, table_markdown}`.
+- SSE endpoint `GET /chat/stream` for streaming responses (optional — can start
+  without streaming and add later).
+- Session cookie set on first visit; 24h TTL; prune stale sessions on each request.
 
-### 6. Config & secrets
-- `.streamlit/secrets.toml` (gitignored) for local `ANTHROPIC_API_KEY`; same key
-  set in Community Cloud Secrets UI.
-- Add `secrets.toml` to `.gitignore`.
+### 6. Frontend (`templates/index.html`)
+- htmx `hx-post="/chat"` on form submit.
+- Response swapped into chat history div.
+- Table rendered as `<pre>` or a simple HTML table from the markdown payload.
+- Minimal CSS — no framework required.
 
-### 7. Deploy (Streamlit Community Cloud)
-- Push repo to GitHub; "New app" → point at `app.py`; add `ANTHROPIC_API_KEY`
-  secret. Build installs `requirements.txt`.
-- Document cold-start: app sleeps after idle; cache rebuild on wake is cheap
-  (local 6.2 MB SQLite).
+### 7. Deploy (Oracle Cloud)
+1. Provision Ampere A1 free instance (Ubuntu 22.04).
+2. Install Ollama, pull `qwen2.5:7b`.
+3. Clone repo, create venv, `VIRTUAL_ENV=.venv uv pip install -r requirements.txt`.
+4. Install `aigctweb.service`, `systemctl enable --now aigctweb`.
+5. Open port 8000 in OCI Security List (or put nginx in front on port 80/443).
+6. Optional: Certbot for HTTPS.
 
-## Build status (2026-06-03)
-All app files written and compile-clean:
-- ✅ `requirements.txt` — streamlit, groq, pandas, sqlalchemy, tabulate,
-  `./vendor/aigct-1.0.1-py3-none-any.whl`
-- ✅ `aigct.yaml` — relative `db.url: sqlite:///db/aigct.db`; full plot block;
-  log/output under `/tmp/aigct`
-- ✅ `aigct_tools.py` — 2 query fns, `TOOL_SCHEMAS` (OpenAI/Groq function format),
-  `dispatch()`, `df_to_tool_result()`; lowercase db cols renamed to friendly
-  labels (VEP, AUC…)
-- ✅ `llm.py` — Groq SDK, `MODEL=llama-3.3-70b-versatile`, system prompt
-  prepended per call, manual tool-use loop in `run_turn()` (OpenAI message format)
-- ✅ `app.py` — Streamlit chat UI, `@st.cache_resource` for client + container,
-  reads `st.secrets["GROQ_API_KEY"]`, example sidebar, error-as-chat-message
-- ✅ `.streamlit/config.toml`, `.streamlit/secrets.toml.example`, `.gitignore`
-  (ignores `.venv_aigweb/` + `.streamlit/secrets.toml`)
-- ✅ `README.md` — overview, task table, layout, API-key steps, run + deploy
+## Build status (2026-06-22 — FastAPI/Ollama rewrite)
+All files written and dependencies installed in `.venv_aigweb`.
 
-## Verification
-1. ✅ **aigct smoke test, no LLM** — both methods against `db/aigct.db`, lowercase
-   columns confirmed.
-2. ✅ **Tool functions** — `dispatch()` for task + gene returns sorted-desc AUC,
-   correct columns (gene col only on the second), unknown gene → clean
-   clarification message, markdown serialization clean. Container builds from the
-   relative db path at repo root.
-3. ⏳ **End-to-end local** — `streamlit run app.py`; ask both example questions.
-   BLOCKED: needs `GROQ_API_KEY` (free, from console.groq.com; no local
-   secrets.toml yet). User to run.
-4. ⏳ **Error paths** — empty-result path unit-verified; full no-crash UI path
-   pending the local run.
-5. ⏳ **Deploy check** — push, deploy on Community Cloud, set secret, re-run.
-
-## How to run locally
-1. `cp .streamlit/secrets.toml.example .streamlit/secrets.toml` and put your free
-   `GROQ_API_KEY` (from <https://console.groq.com>) in it.
-2. `.venv_aigweb/bin/python -m streamlit run app.py` (deps already installed in
-   `.venv_aigweb`).
+- [x] `aigct_tools.py` — verified, reused as-is
+- [x] `aigct.yaml` — verified, reused as-is
+- [x] `db/aigct.db` — committed, 6.2 MB
+- [x] `vendor/aigct-1.0.1-py3-none-any.whl` — committed
+- [x] `llm.py` — Ollama client (`openai` SDK, `base_url=http://localhost:11434/v1`), `MODEL=qwen2.5:7b`
+- [x] `app.py` — FastAPI: startup Ollama health-check, in-memory sessions, GET `/`, POST `/chat`, POST `/clear`
+- [x] `templates/index.html` — htmx chat UI: sidebar examples, user/assistant bubbles, result tables
+- [x] `requirements.txt` — fastapi, uvicorn[standard], openai, jinja2, python-multipart, markdown; streamlit/groq removed
+- [x] `aigctweb.service` — systemd unit with `Requires=ollama.service`
+- [ ] End-to-end test on OCI instance (needs Ollama + `qwen2.5:7b` running)
 
 ## Decisions (locked)
-1. **LLM backend**: **Groq** (free tier, OpenAI-compatible function calling),
-   model `llama-3.3-70b-versatile`. Switched from Anthropic/Claude on 2026-06-03
-   to avoid paid API cost. Secret: `GROQ_API_KEY`.
-2. **aigct install for deploy**: vendor the wheel at
-   `vendor/aigct-1.0.1-py3-none-any.whl` and reference it by relative path in
-   `requirements.txt`. (Locally we use the already-installed `.venv_aigweb`.)
-
-_No open questions — ready to implement._
+1. **LLM backend**: **Ollama** (local, free), model `qwen2.5:7b`. No external API key needed.
+2. **Web framework**: **FastAPI** + htmx/Jinja2 for multi-user support.
+3. **Hosting**: **Oracle Cloud Free Tier** Ampere A1 (4 OCPUs, 24 GB RAM).
+4. **Process management**: **systemd** — `ollama.service` (auto-installed) +
+   `aigctweb.service` with `Requires=ollama.service`.
+5. **aigct install**: vendor the wheel at `vendor/aigct-1.0.1-py3-none-any.whl`,
+   reference by relative path in `requirements.txt`.

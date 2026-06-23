@@ -239,7 +239,7 @@ def dispatch(name: str, tool_input: dict, query_mgr):
     return title, df, df_to_tool_result(df)
 
 
-def df_to_tool_result(df: pd.DataFrame, max_rows: int = 50) -> str:
+def df_to_tool_result(df: pd.DataFrame, max_rows: int = 10) -> str:
     """Compact, token-bounded serialization of a result DataFrame for the model."""
     shown = df.head(max_rows)
     md = shown.to_markdown(index=False, floatfmt=".4f")
