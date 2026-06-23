@@ -2,14 +2,17 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Streamlit: app.py",
+      "name": "FastAPI: uvicorn (dev)",
       "type": "debugpy",
       "request": "launch",
-      "module": "streamlit",
-      "args": ["run", "app.py", "--server.headless=true"],
+      "module": "uvicorn",
+      "args": ["app:app", "--reload", "--port", "8000"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "justMyCode": false
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
     }
   ]
 }
