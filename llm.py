@@ -36,10 +36,9 @@ def _parse_legacy_tool_call(failed_generation: str) -> dict | None:
     return {"id": f"call_{uuid.uuid4().hex[:8]}", "name": name, "arguments": args_str}
 
 
-# Groq model with reliable tool-calling on the free tier. If Groq retires this
-# id, pick a current one from https://console.groq.com/docs/models.
-MODEL = "llama-3.3-70b-versatile"
-MAX_TOKENS = 1024
+MODEL = "llama-3.1-8b-instant"
+MAX_TOKENS = 512          # tool-call turn; tool JSON is short
+MAX_TOKENS_SUMMARY = 256  # summary turn; system prompt says 1-3 sentences
 
 SYSTEM_PROMPT = """\
 You are an assistant that answers questions about the benchmark performance of \
@@ -84,16 +83,19 @@ def run_turn(client: Groq, messages: list, query_mgr):
     a list of (title, DataFrame) produced during the turn.
     """
     tables = []
+    has_tool_results = False
 
     while True:
         try:
-            response = client.chat.completions.create(
+            kwargs = dict(
                 model=MODEL,
-                max_tokens=MAX_TOKENS,
+                max_tokens=MAX_TOKENS_SUMMARY if has_tool_results else MAX_TOKENS,
                 messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-                tools=aigct_tools.TOOL_SCHEMAS,
-                tool_choice="auto",
             )
+            if not has_tool_results:
+                kwargs["tools"] = aigct_tools.TOOL_SCHEMAS
+                kwargs["tool_choice"] = "auto"
+            response = client.chat.completions.create(**kwargs)
         except BadRequestError as exc:
             # Groq rejects its own model output when the model emits the legacy
             # <function=name(args)></function> format instead of JSON tool calls.
@@ -132,6 +134,7 @@ def run_turn(client: Groq, messages: list, query_mgr):
                                 "content": result_text,
                             }
                         )
+                    has_tool_results = True
                     continue  # re-enter loop so the model can summarise
             raise  # re-raise if we can't handle it
 
@@ -178,3 +181,4 @@ def run_turn(client: Groq, messages: list, query_mgr):
                     "content": result_text,
                 }
             )
+        has_tool_results = True
