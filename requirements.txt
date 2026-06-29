@@ -1,5 +1,5 @@
 streamlit
-groq
+openai
 pandas
 sqlalchemy
 tabulate

@@ -19,20 +19,20 @@ skinparam sequence {
 ' --- PARTICIPANTS ---
 participant "Browser / User" as Browser
 participant "Streamlit App\n(app.py)" as Streamlit
-participant "Groq LLM" as Groq
+participant "Open Router LLM" as OpenRouter
 participant "Tool Layer\n(aigct_tools.py)" as Tools
 participant "AIGCT Query Manager\n(SQLite DB)" as QM
 
 ' --- INTERACTIONS ---
 Browser -> Streamlit : 1. submit question
-Streamlit -> Groq : 2. send request\n(system prompt + history + tools)
-Groq -> Streamlit : 3. tool-call reply
+Streamlit -> OpenRouter : 2. send request\n(system prompt + history + tools)
+OpenRouter -> Streamlit : 3. tool-call reply
 Streamlit -> Tools : 4. dispatch tool call
 Tools -> QM : 5. execute query
 QM -> Tools : 6. DataFrame result
 Tools -> Streamlit : 7. markdown + table
-Streamlit -> Groq : 8. send tool result back to LLM
-Groq -> Streamlit : 9. final text summary
+Streamlit -> OpenRouter : 8. send tool result back to LLM
+OpenRouter -> Streamlit : 9. final text summary
 Streamlit -> Browser : 10. render summary + table
 
 @enduml

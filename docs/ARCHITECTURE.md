@@ -2,7 +2,7 @@
 
 ## Overview
 
-`aigctweb` is a Streamlit-based chat application that lets users ask natural language questions about benchmark performance of variant effect predictors (VEPs). The app routes each question through a Groq-hosted LLM using function/tool calls to query a local `aigct` benchmark database, then renders both a short assistant summary and a ranked results table.
+`aigctweb` is a Streamlit-based chat application that lets users ask natural language questions about benchmark performance of variant effect predictors (VEPs). The app routes each question through a OpenRouter-hosted LLM using function/tool calls to query a local `aigct` benchmark database, then renders both a short assistant summary and a ranked results table.
 
 ## Architectural Components
 
@@ -12,12 +12,12 @@
 
 - `Streamlit App` (`app.py`)
   - Serves the chat UI.
-  - Holds cached resources: Groq client and `aigct` query manager.
+  - Holds cached resources: OpenRouter client and `aigct` query manager.
   - Collects user input and session state.
   - Orchestrates the tool-use loop by calling `llm.run_turn()`.
 
-- `Groq Client` (`llm.py`)
-  - Wraps the Groq API client.
+- `OpenRouter Client` (`llm.py`)
+  - Wraps the OpenRouter API client.
   - Maintains the system prompt and model configuration.
   - Sends conversation history and tool schemas to the model.
   - Receives assistant replies and tool call requests.
@@ -43,11 +43,11 @@
 1. User submits a question in the browser.
 2. `Streamlit` app appends the question to session-state messages.
 3. `app.py` calls `llm.run_turn(client, messages, query_mgr)`.
-4. `llm.run_turn()` sends the full conversation to Groq with tool schemas:
+4. `llm.run_turn()` sends the full conversation to OpenRouter with tool schemas:
    - system prompt
    - user turn history
    - candidate tool definitions
-5. Groq returns one of three outcomes:
+5. OpenRouter returns one of three outcomes:
    - direct text reply (no tool call) → proceed to step 8
    - tool call request for `get_top_veps_for_task`
    - tool call request for `get_top_veps_for_task_gene`
@@ -57,10 +57,10 @@
    - `dispatch()` executes the query against `query_mgr`
    - query result becomes a pandas DataFrame and markdown text
    - `messages` appends a tool response entry (in OpenAI message format)
-   - **The loop continues: `llm.run_turn()` sends the updated messages (now including the tool result) back to Groq**
-7. Groq processes the tool result and generates a final text summary:
-   - Groq reads the markdown result and ranked table
-   - Groq returns a final text response (no more tool calls)
+   - **The loop continues: `llm.run_turn()` sends the updated messages (now including the tool result) back to OpenRouter**
+7. OpenRouter processes the tool result and generates a final text summary:
+   - OpenRouter reads the markdown result and ranked table
+   - OpenRouter returns a final text response (no more tool calls)
    - `llm.run_turn()` records this final response in `messages`
 8. `llm.run_turn()` returns the final assistant text and collected tables to `app.py`:
    - `app.py` renders the text summary to the chat
@@ -70,18 +70,18 @@
 
 ![AIGCT architecture diagram](interaction_diagram.png)
 
-The diagram above is a true PNG image showing the component flow and message exchanges between the browser, Streamlit app, Groq LLM, tool layer, query manager, and SQLite benchmark.
+The diagram above is a true PNG image showing the component flow and message exchanges between the browser, Streamlit app, OpenRouter LLM, tool layer, query manager, and SQLite benchmark.
 
 ## Component Responsibilities
 
 - `app.py`
   - UI layout and session state management.
-  - Caching long-lived resources to avoid rebuilding the Groq client or database container repeatedly.
+  - Caching long-lived resources to avoid rebuilding the OpenRouter client or database container repeatedly.
   - Error handling and final presentation of assistant replies and tables.
 
 - `llm.py`
   - LLM orchestration and tool-call loop.
-  - Converts Groq function-calling responses into structured assistant/tool messages.
+  - Converts OpenRouter function-calling responses into structured assistant/tool messages.
   - Keeps the responsibilities of the model separate from the query logic.
 
 - `aigct_tools.py`
@@ -97,14 +97,14 @@ The diagram above is a true PNG image showing the component flow and message exc
 ## Deployment Notes
 
 - The app uses the vendored `aigct` wheel from `vendor/aigct-1.0.1-py3-none-any.whl`.
-- `requirements.txt` installs dependencies including Streamlit, Groq client, and the bundled `aigct` package.
+- `requirements.txt` installs dependencies including Streamlit, OpenRouter client, and the bundled `aigct` package.
 - `app.py` is the Streamlit entry point and serves at `localhost:8501`.
 - Local secrets are loaded from `.streamlit/secrets.toml`.
 
 ## Key Architectural Patterns
 
 - Tool-oriented LLM interaction: the model is asked to call tools rather than answer directly.
-- Cache resource reuse: `@st.cache_resource` keeps the Groq client and query manager in memory.
+- Cache resource reuse: `@st.cache_resource` keeps the OpenRouter client and query manager in memory.
 - Separation of concerns:
   - UI layer in `app.py`
   - LLM orchestration in `llm.py`

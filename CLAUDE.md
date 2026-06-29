@@ -3,14 +3,14 @@
 ## Project overview
 
 Streamlit chat app where users ask natural-language questions about variant effect
-predictor (VEP) benchmark performance. An LLM (Groq) answers by tool-calling the
+predictor (VEP) benchmark performance. An LLM (OpenRouter) answers by tool-calling the
 `aigct` package's query methods and rendering a ranked ROC-AUC table.
 
 ## Key files
 
 ```
 app.py              — Streamlit UI + tool-use loop wiring
-llm.py              — Groq client, system prompt, run_turn() agent loop
+llm.py              — OpenRouter client, system prompt, run_turn() agent loop
 aigct_tools.py      — query functions, tool schemas, result serialization
 aigct.yaml          — aigct config pointing to db/aigct.db
 db/aigct.db         — bundled ~6 MB SQLite benchmark (committed)
@@ -18,21 +18,21 @@ vendor/             — vendored aigct wheel (committed; installed via requireme
 requirements.txt
 .streamlit/
   config.toml
-  secrets.toml      — local only, gitignored — GROQ_API_KEY goes here
+  secrets.toml      — local only, gitignored — OPENROUTER_API_KEY goes here
 ```
 
 ## Architecture
 
 ```
-Browser -> app.py (Streamlit) -> llm.py (Groq tool-use loop)
+Browser -> app.py (Streamlit) -> llm.py (OpenRouter tool-use loop)
                                         |
                           aigct_tools.py dispatch()
                                         |
                           aigct VEBenchmarkContainer -> db/aigct.db
 ```
 
-- LLM: Groq free tier, model `llama-3.3-70b-versatile`, OpenAI-compatible function calling
-- Secret: `GROQ_API_KEY` (from `.streamlit/secrets.toml` locally; Streamlit Cloud Secrets in prod)
+- LLM: OpenRouter free tier, model `llama-3.3-70b-versatile`, OpenAI-compatible function calling
+- Secret: `OPENROUTER_API_KEY` (from `.streamlit/secrets.toml` locally; Streamlit Cloud Secrets in prod)
 - Tool calling is in-process (no MCP server)
 - The `aigct` package is NOT on PyPI — it is vendored as a `.whl` in `vendor/` and installed
   via `requirements.txt` by relative path
@@ -77,7 +77,7 @@ Columns are LOWERCASE. Display labels (VEP, ROC AUC, etc.) are applied in `aigct
 ## Deployment (Streamlit Community Cloud)
 
 - `db/aigct.db` and `vendor/*.whl` must be committed — needed at build/runtime
-- In app Secrets UI set: `GROQ_API_KEY = "gsk_..."`
+- In app Secrets UI set: `OPENROUTER_API_KEY = "gsk_..."`
 - `requirements.txt` installs the vendored wheel by relative path
 
 ## Do not
