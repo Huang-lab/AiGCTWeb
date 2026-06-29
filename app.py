@@ -1,45 +1,23 @@
-"""FastAPI chat app: ask natural-language questions about VEP performance.
+"""Streamlit chat app: ask natural-language questions about VEP performance.
 
-The LLM routes each question to one of the aigct query methods via tool calling
-and the app renders the returned table ranked by AUC.
+Claude routes each question to one of two aigct query methods and the app
+renders the returned table, ranked by AUC.
 """
 
 from __future__ import annotations
 
-import asyncio
-import html
-import logging
-import uuid
-from typing import Annotated
-
-import httpx
-import markdown as md
-from fastapi import Cookie, FastAPI, Form, Request, Response
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from starlette.concurrency import run_in_threadpool
-
+import streamlit as st
 from aigct.container import VEBenchmarkContainer
 
 import llm
 
+st.set_page_config(
+    page_title="AIGCT — VEP Performance Chat",
+    page_icon="🧬",
+    layout="centered",
+)
+
 CONFIG_PATH = "aigct.yaml"
-OLLAMA_HEALTH_URL = "http://localhost:11434/api/tags"
-
-logger = logging.getLogger(__name__)
-
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
-# Shared resources — initialised once at startup.
-_client = None
-_query_mgr = None
-_ollama_ready = False
-
-# Per-session message history: session_id -> list of OpenAI-format messages.
-_sessions: dict[str, list] = {}
 
 EXAMPLES = [
     {
@@ -60,134 +38,270 @@ EXAMPLES = [
     },
 ]
 
+_CSS = """
+<style>
+/* ── Header ─────────────────────────────────────────────────────── */
+.aigct-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.25rem;
+}
+.aigct-header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #0F172A;
+    margin: 0;
+    line-height: 1.2;
+}
+.aigct-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #1D4ED8;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 999px;
+    padding: 2px 10px;
+    white-space: nowrap;
+}
+.aigct-subtitle {
+    color: #64748B;
+    font-size: 0.92rem;
+    margin-bottom: 1.5rem;
+}
 
-@app.on_event("startup")
-async def startup() -> None:
-    global _client, _query_mgr, _ollama_ready
+/* ── Example cards ───────────────────────────────────────────────── */
+.example-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-top: 2rem;
+}
+div[data-testid="stVerticalBlock"] .example-card-btn button {
+    border: 1.5px solid #E2E8F0;
+    border-radius: 10px;
+    background: #F8FAFC;
+    color: #1E293B;
+    font-size: 0.85rem;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    transition: border-color 0.15s, background 0.15s;
+    height: auto;
+    white-space: normal;
+}
+div[data-testid="stVerticalBlock"] .example-card-btn button:hover {
+    border-color: #1D4ED8;
+    background: #EFF6FF;
+}
 
-    # Check Ollama — non-fatal so the app starts in dev without it.
-    try:
-        async with httpx.AsyncClient() as c:
-            await c.get(OLLAMA_HEALTH_URL, timeout=3.0)
-        _ollama_ready = True
-    except Exception:
-        logger.warning(
-            "Ollama not reachable at %s — chat will return an error until "
-            "Ollama is started.",
-            OLLAMA_HEALTH_URL,
-        )
+/* ── Sidebar tweaks ──────────────────────────────────────────────── */
+[data-testid="stSidebarContent"] {
+    padding-top: 1.5rem;
+}
+.sidebar-section-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #94A3B8;
+    margin-bottom: 0.4rem;
+}
 
-    _client = llm.make_client()
-    container = VEBenchmarkContainer(CONFIG_PATH)
-    _query_mgr = container.query_mgr
-
-    # Pre-warm: load the model into Ollama so the first user query isn't slow.
-    if _ollama_ready:
-        try:
-            await run_in_threadpool(
-                lambda: _client.chat.completions.create(
-                    model=llm.MODEL,
-                    max_tokens=1,
-                    messages=[{"role": "user", "content": "hi"}],
-                    extra_body={"options": {"num_ctx": llm.NUM_CTX}},
-                )
-            )
-            logger.info("Ollama model pre-warmed.")
-        except Exception as e:
-            logger.warning("Pre-warm failed: %s", e)
-
-
-def _get_or_create_session(session_id: str | None) -> tuple[str, list]:
-    if not session_id or session_id not in _sessions:
-        session_id = uuid.uuid4().hex
-        _sessions[session_id] = []
-    return session_id, _sessions[session_id]
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index(
-    request: Request,
-    response: Response,
-    session_id: Annotated[str | None, Cookie()] = None,
-) -> HTMLResponse:
-    session_id, _ = _get_or_create_session(session_id)
-    resp = templates.TemplateResponse(
-        request,
-        "index.html",
-        {"examples": EXAMPLES, "session_id": session_id},
-    )
-    resp.set_cookie("session_id", session_id, max_age=86400, httponly=True)
-    return resp
-
-
-@app.post("/chat", response_class=HTMLResponse)
-async def chat(
-    request: Request,
-    response: Response,
-    message: Annotated[str, Form()],
-    session_id: Annotated[str | None, Cookie()] = None,
-) -> HTMLResponse:
-    session_id, messages = _get_or_create_session(session_id)
-
-    if not _ollama_ready:
-        # Re-check in case Ollama started after the app did.
-        try:
-            async with httpx.AsyncClient() as c:
-                await c.get(OLLAMA_HEALTH_URL, timeout=2.0)
-            globals()["_ollama_ready"] = True
-        except Exception:
-            pass
-
-    messages.append({"role": "user", "content": message})
-
-    if not _ollama_ready:
-        text = (
-            "**Ollama is not running.** "
-            "Start Ollama (`ollama serve`) and ensure `qwen2.5:7b` is pulled, "
-            "then try again."
-        )
-        tables = []
-    else:
-        try:
-            text, tables = await run_in_threadpool(
-                llm.run_turn, _client, messages, _query_mgr
-            )
-        except Exception as exc:
-            text = f"**Error:** {exc}"
-            tables = []
-
-    # Build the HTML fragment: user bubble + assistant bubble.
-    user_html = html.escape(message)
-
-    assistant_body = md.markdown(text) if text else ""
-    for title, df in tables:
-        assistant_body += f'<p class="table-title">{html.escape(title)}</p>'
-        assistant_body += df.to_html(
-            index=False,
-            classes="result-table",
-            float_format=lambda x: f"{x:.4f}",
-            border=0,
-        )
-
-    fragment = f"""
-<div class="msg msg-user">
-  <div class="bubble">{user_html}</div>
-</div>
-<div class="msg msg-assistant">
-  <div class="bubble">
-    {assistant_body}
-  </div>
-</div>
+/* ── Table caption ───────────────────────────────────────────────── */
+.table-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 1rem 0 0.3rem;
+}
+</style>
 """
-    resp = HTMLResponse(fragment)
-    resp.set_cookie("session_id", session_id, max_age=86400, httponly=True)
-    return resp
 
 
-@app.post("/clear", response_class=HTMLResponse)
-async def clear(
-    session_id: Annotated[str | None, Cookie()] = None,
-) -> HTMLResponse:
-    if session_id and session_id in _sessions:
-        _sessions[session_id] = []
-    return HTMLResponse("")
+@st.cache_resource
+def get_query_mgr():
+    """Build the aigct container once per process (SQLite-backed, reused)."""
+    container = VEBenchmarkContainer(CONFIG_PATH)
+    return container.query_mgr
+
+
+@st.cache_resource
+def get_client():
+    return llm.make_client(st.secrets["OPENROUTER_API_KEY"])
+
+
+def _auc_column_config(df):
+    """Return column_config for st.dataframe, adding a progress bar for ROC AUC."""
+    cfg = {}
+    if "ROC AUC" in df.columns:
+        cfg["ROC AUC"] = st.column_config.ProgressColumn(
+            "ROC AUC",
+            help="Area under the ROC curve (0.5 = random, 1.0 = perfect)",
+            min_value=0.5,
+            max_value=1.0,
+            format="%.4f",
+        )
+    return cfg
+
+
+def render_table(title: str, df):
+    st.markdown(f'<p class="table-title">{title}</p>', unsafe_allow_html=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config=_auc_column_config(df),
+    )
+
+
+def render_history():
+    for entry in st.session_state.history:
+        with st.chat_message(entry["role"]):
+            if entry.get("text"):
+                st.markdown(entry["text"])
+            for title, df in entry.get("tables", []):
+                render_table(title, df)
+
+
+def render_welcome():
+    st.markdown(
+        "<p style='color:#64748B;font-size:0.95rem;margin-bottom:0.5rem'>"
+        "Try one of these example questions, or type your own below:"
+        "</p>",
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(2)
+    for i, ex in enumerate(EXAMPLES):
+        with cols[i % 2]:
+            with st.container():
+                st.markdown(
+                    f"<div class='example-card-btn'>", unsafe_allow_html=True
+                )
+                if st.button(
+                    f"**{ex['label']}**\n\n{ex['prompt']}",
+                    key=f"ex_{i}",
+                    use_container_width=True,
+                ):
+                    st.session_state.pending_prompt = ex["prompt"]
+                st.markdown("</div>", unsafe_allow_html=True)
+
+
+def main():
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+    # Header
+    st.markdown(
+        '<div class="aigct-header">'
+        '<h1>🧬 AIGCT</h1>'
+        '<span class="aigct-badge">VEP Performance Chat</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<p class="aigct-subtitle">'
+        "Ask in plain English which variant effect predictors perform best "
+        "for a disease area or gene."
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "history" not in st.session_state:
+        st.session_state.history = []
+    if "pending_prompt" not in st.session_state:
+        st.session_state.pending_prompt = None
+
+    # Sidebar
+    with st.sidebar:
+        st.markdown(
+            '<p class="sidebar-section-label">About</p>', unsafe_allow_html=True
+        )
+        with st.expander("What is AIGCT Chat?", expanded=False):
+            st.markdown(
+                """
+**AIGCT Chat** is a front end to summary data available in AIGCT, a platform
+for systematically evaluating ML/AI models of variant effects across the
+spectrum of genomics-based precision medicine.
+
+It lets you ask in natural English about the performance of publicly available
+variant effect predictors (VEPs) for various disease areas and genes.
+
+**Disease areas covered:** Cancer, Alzheimer's & related dementias, ClinVar,
+Autism spectrum disorder, Congenital heart disease, Developmental disorders.
+
+More detailed data and benchmarking of your own VEPs are available directly
+in the AIGCT platform — see the
+[documentation](https://aigct.readthedocs.io/en/latest/) and
+[GitHub](https://github.com/Huang-lab/AiGCT).
+                """
+            )
+
+        st.divider()
+        st.markdown(
+            '<p class="sidebar-section-label">Quick examples</p>',
+            unsafe_allow_html=True,
+        )
+        for ex in EXAMPLES:
+            if st.button(ex["label"], use_container_width=True, key=f"sb_{ex['label']}"):
+                st.session_state.pending_prompt = ex["prompt"]
+
+        st.divider()
+        if st.button("Clear conversation", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.history = []
+            st.rerun()
+
+    # Main content
+    if st.session_state.history:
+        render_history()
+    else:
+        render_welcome()
+
+    # Chat input
+    prompt = st.chat_input("Ask about VEP performance…")
+    if not prompt and st.session_state.pending_prompt:
+        prompt = st.session_state.pending_prompt
+        st.session_state.pending_prompt = None
+    if not prompt:
+        return
+
+    st.session_state.history.append({"role": "user", "text": prompt, "tables": []})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.chat_message("assistant"):
+        try:
+            with st.spinner("Querying the benchmark…"):
+                client = get_client()
+                query_mgr = get_query_mgr()
+                text, tables = llm.run_turn(
+                    client, st.session_state.messages, query_mgr
+                )
+        except Exception as exc:
+            err = f"Something went wrong: {exc}"
+            st.error(err)
+            st.session_state.history.append(
+                {"role": "assistant", "text": err, "tables": []}
+            )
+            return
+
+        if text:
+            st.markdown(text)
+        for title, df in tables:
+            render_table(title, df)
+
+    st.session_state.history.append(
+        {"role": "assistant", "text": text, "tables": tables}
+    )
+
+
+if __name__ == "__main__":
+    main()

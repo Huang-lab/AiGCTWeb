@@ -1,5 +1,6 @@
-"""Ollama client (OpenAI-compatible API), system prompt, and tool-use agent loop.
+"""OpenRouter client factory, system prompt, and the tool-use agent loop.
 
+OpenRouter exposes an OpenAI-compatible chat-completions API with function calling.
 The conversation in `messages` is kept in OpenAI message format (the system
 prompt is prepended at call time, not stored).
 """
@@ -12,11 +13,9 @@ from openai import OpenAI
 
 import aigct_tools
 
-MODEL = "qwen2.5:7b"
-MAX_TOKENS = 512          # tool-call turn; tool JSON is short
+MODEL = "meta-llama/llama-3.1-8b-instruct"
+MAX_TOKENS = 512  # tool-call turn; tool JSON is short
 MAX_TOKENS_SUMMARY = 256  # summary turn; system prompt says 1-3 sentences
-NUM_CTX = 4096            # cap KV-cache; speeds up prefill significantly
-OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
 SYSTEM_PROMPT = """\
 You are an assistant that answers questions about the benchmark performance of \
@@ -49,8 +48,11 @@ braces. Never use any other format for tool arguments.
 """
 
 
-def make_client() -> OpenAI:
-    return OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
+def make_client(api_key: str) -> OpenAI:
+    return OpenAI(
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+    )
 
 
 def run_turn(client: OpenAI, messages: list, query_mgr):
@@ -61,19 +63,19 @@ def run_turn(client: OpenAI, messages: list, query_mgr):
     a list of (title, DataFrame) produced during the turn.
     """
     tables = []
-
     has_tool_results = False
+
     while True:
         kwargs = dict(
             model=MODEL,
             max_tokens=MAX_TOKENS_SUMMARY if has_tool_results else MAX_TOKENS,
             messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-            extra_body={"options": {"num_ctx": NUM_CTX}},
         )
         if not has_tool_results:
             kwargs["tools"] = aigct_tools.TOOL_SCHEMAS
             kwargs["tool_choice"] = "auto"
         response = client.chat.completions.create(**kwargs)
+
         msg = response.choices[0].message
 
         if not msg.tool_calls:
@@ -81,7 +83,7 @@ def run_turn(client: OpenAI, messages: list, query_mgr):
             messages.append({"role": "assistant", "content": text})
             return text, tables
 
-        # Append the assistant turn carrying the tool calls.
+        # Append the assistant turn carrying the tool calls (serializable form).
         messages.append(
             {
                 "role": "assistant",
