@@ -131,7 +131,7 @@ def get_query_mgr():
 
 @st.cache_resource
 def get_client():
-    return llm.make_client(st.secrets["GROQ_API_KEY"])
+    return llm.make_client(st.secrets["OPENROUTER_API_KEY"])
 
 
 def _auc_column_config(df):

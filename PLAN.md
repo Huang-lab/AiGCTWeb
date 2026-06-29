@@ -138,17 +138,17 @@ tabulate            # if df.to_markdown() is used for tool_result
 
 ## Build status (2026-06-03)
 All app files written and compile-clean:
-- ✅ `requirements.txt` — streamlit, groq, pandas, sqlalchemy, tabulate,
+- ✅ `requirements.txt` — streamlit, OpenRouter, pandas, sqlalchemy, tabulate,
   `./vendor/aigct-1.0.1-py3-none-any.whl`
 - ✅ `aigct.yaml` — relative `db.url: sqlite:///db/aigct.db`; full plot block;
   log/output under `/tmp/aigct`
-- ✅ `aigct_tools.py` — 2 query fns, `TOOL_SCHEMAS` (OpenAI/Groq function format),
+- ✅ `aigct_tools.py` — 2 query fns, `TOOL_SCHEMAS` (OpenAI/OpenRouter function format),
   `dispatch()`, `df_to_tool_result()`; lowercase db cols renamed to friendly
   labels (VEP, AUC…)
-- ✅ `llm.py` — Groq SDK, `MODEL=llama-3.3-70b-versatile`, system prompt
+- ✅ `llm.py` — OpenRouter SDK, `MODEL=llama-3.3-70b-versatile`, system prompt
   prepended per call, manual tool-use loop in `run_turn()` (OpenAI message format)
 - ✅ `app.py` — Streamlit chat UI, `@st.cache_resource` for client + container,
-  reads `st.secrets["GROQ_API_KEY"]`, example sidebar, error-as-chat-message
+  reads `st.secrets["OPENROUTER_API_KEY"]`, example sidebar, error-as-chat-message
 - ✅ `.streamlit/config.toml`, `.streamlit/secrets.toml.example`, `.gitignore`
   (ignores `.venv_aigweb/` + `.streamlit/secrets.toml`)
 - ✅ `README.md` — overview, task table, layout, API-key steps, run + deploy
@@ -161,7 +161,7 @@ All app files written and compile-clean:
    clarification message, markdown serialization clean. Container builds from the
    relative db path at repo root.
 3. ⏳ **End-to-end local** — `streamlit run app.py`; ask both example questions.
-   BLOCKED: needs `GROQ_API_KEY` (free, from console.groq.com; no local
+   BLOCKED: needs `OPENROUTER_API_KEY` (free, from console.OpenRouter.com; no local
    secrets.toml yet). User to run.
 4. ⏳ **Error paths** — empty-result path unit-verified; full no-crash UI path
    pending the local run.
@@ -169,14 +169,14 @@ All app files written and compile-clean:
 
 ## How to run locally
 1. `cp .streamlit/secrets.toml.example .streamlit/secrets.toml` and put your free
-   `GROQ_API_KEY` (from <https://console.groq.com>) in it.
+   `OPENROUTER_API_KEY` (from <https://console.OpenRouter.com>) in it.
 2. `.venv_aigweb/bin/python -m streamlit run app.py` (deps already installed in
    `.venv_aigweb`).
 
 ## Decisions (locked)
-1. **LLM backend**: **Groq** (free tier, OpenAI-compatible function calling),
+1. **LLM backend**: **OpenRouter** (free tier, OpenAI-compatible function calling),
    model `llama-3.3-70b-versatile`. Switched from Anthropic/Claude on 2026-06-03
-   to avoid paid API cost. Secret: `GROQ_API_KEY`.
+   to avoid paid API cost. Secret: `OPENROUTER_API_KEY`.
 2. **aigct install for deploy**: vendor the wheel at
    `vendor/aigct-1.0.1-py3-none-any.whl` and reference it by relative path in
    `requirements.txt`. (Locally we use the already-installed `.venv_aigweb`.)
