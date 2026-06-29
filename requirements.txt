@@ -1,9 +1,5 @@
-fastapi
-uvicorn[standard]
+streamlit
 openai
-jinja2
-python-multipart
-markdown
 pandas
 sqlalchemy
 tabulate
