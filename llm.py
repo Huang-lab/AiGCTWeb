@@ -43,6 +43,8 @@ results (e.g. an unrecognized gene), ask the user to clarify rather than guessin
 - The full results table is rendered to the user separately, so do NOT repeat the \
 whole table in your reply. Give a brief (1-3 sentence) summary naming the top few \
 VEPs and their AUCs, and note the task/gene you used.
+- When user mentions only a disease without mentioning a gene provide the results
+for the overall task, not for any specific gene.
 - IMPORTANT: when calling a tool, arguments MUST be valid JSON enclosed in curly \
 braces. Never use any other format for tool arguments.
 """
@@ -53,6 +55,31 @@ def make_client(api_key: str) -> OpenAI:
         api_key=api_key,
         base_url="https://openrouter.ai/api/v1",
     )
+
+
+def _parse_content_tool_calls(content: str | None) -> list[tuple[str, dict]] | None:
+    """Try to parse JSON tool calls embedded in message content.
+
+    Returns a list of (function_name, args_dict) tuples, or None if the content
+    doesn't look like a tool-call payload.
+    """
+    if not content:
+        return None
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        return None
+    calls = []
+    print("a" + str(data))
+    for item in data:
+        if isinstance(item, dict) and "name" in item:
+            args = item.get("parameters") or item.get("arguments") or {}
+            calls.append((item["name"], args))
+    return calls or None
 
 
 def run_turn(client: OpenAI, messages: list, query_mgr):
@@ -73,12 +100,30 @@ def run_turn(client: OpenAI, messages: list, query_mgr):
         )
         if not has_tool_results:
             kwargs["tools"] = aigct_tools.TOOL_SCHEMAS
-            kwargs["tool_choice"] = "auto"
+            kwargs["tool_choice"] = "required"
         response = client.chat.completions.create(**kwargs)
 
         msg = response.choices[0].message
 
         if not msg.tool_calls:
+            # Some models return tool calls as JSON text in content instead of
+            # using the structured tool_calls field.  Try to parse and dispatch.
+            parsed_calls = _parse_content_tool_calls(msg.content)
+            if parsed_calls and not has_tool_results:
+                messages.append({"role": "assistant", "content": msg.content or ""})
+                for name, args in parsed_calls:
+                    title, df, result_text = aigct_tools.dispatch(name, args, query_mgr)
+                    if df is not None:
+                        tables.append((title, df))
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"Tool result for {name}: {result_text}",
+                        }
+                    )
+                has_tool_results = True
+                continue
+
             text = msg.content or ""
             messages.append({"role": "assistant", "content": text})
             return text, tables
