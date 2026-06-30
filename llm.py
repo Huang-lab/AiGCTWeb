@@ -15,7 +15,7 @@ import aigct_tools
 
 MODEL = "meta-llama/llama-3.1-8b-instruct"
 MAX_TOKENS = 512  # tool-call turn; tool JSON is short
-MAX_TOKENS_SUMMARY = 256  # summary turn; system prompt says 1-3 sentences
+MAX_TOKENS_SUMMARY = 1024  # summary turn; system prompt says 1-3 sentences
 
 SYSTEM_PROMPT = """\
 You are an assistant that answers questions about the benchmark performance of \
@@ -57,6 +57,27 @@ def make_client(api_key: str) -> OpenAI:
     )
 
 
+def _user_facing_messages(messages: list) -> list:
+    """Strip raw tool-call and tool-result messages from history.
+
+    Used when sending the first API call of a new turn so the model cannot
+    answer from cached tool data — it must call a tool again.
+    """
+    out = []
+    for msg in messages:
+        role = msg.get("role")
+        if role == "tool":
+            continue
+        if role == "assistant" and msg.get("tool_calls"):
+            continue
+        # Skip synthetic "Tool result for …" user messages from the
+        # content-parsing fallback path.
+        if role == "user" and msg.get("content", "").startswith("Tool result for "):
+            continue
+        out.append(msg)
+    return out
+
+
 def _parse_content_tool_calls(content: str | None) -> list[tuple[str, dict]] | None:
     """Try to parse JSON tool calls embedded in message content.
 
@@ -74,7 +95,6 @@ def _parse_content_tool_calls(content: str | None) -> list[tuple[str, dict]] | N
     if not isinstance(data, list):
         return None
     calls = []
-    print("a" + str(data))
     for item in data:
         if isinstance(item, dict) and "name" in item:
             args = item.get("parameters") or item.get("arguments") or {}
@@ -93,10 +113,11 @@ def run_turn(client: OpenAI, messages: list, query_mgr):
     has_tool_results = False
 
     while True:
+        history = messages if has_tool_results else _user_facing_messages(messages)
         kwargs = dict(
             model=MODEL,
             max_tokens=MAX_TOKENS_SUMMARY if has_tool_results else MAX_TOKENS,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
         )
         if not has_tool_results:
             kwargs["tools"] = aigct_tools.TOOL_SCHEMAS

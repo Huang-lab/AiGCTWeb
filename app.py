@@ -152,7 +152,7 @@ def render_table(title: str, df):
     st.markdown(f'<p class="table-title">{title}</p>', unsafe_allow_html=True)
     st.dataframe(
         df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config=_auc_column_config(df),
     )
@@ -178,13 +178,11 @@ def render_welcome():
     for i, ex in enumerate(EXAMPLES):
         with cols[i % 2]:
             with st.container():
-                st.markdown(
-                    f"<div class='example-card-btn'>", unsafe_allow_html=True
-                )
+                st.markdown(f"<div class='example-card-btn'>", unsafe_allow_html=True)
                 if st.button(
                     f"**{ex['label']}**\n\n{ex['prompt']}",
                     key=f"ex_{i}",
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     st.session_state.pending_prompt = ex["prompt"]
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -196,7 +194,7 @@ def main():
     # Header
     st.markdown(
         '<div class="aigct-header">'
-        '<h1>🧬 AIGCT</h1>'
+        "<h1>🧬 AIGCT</h1>"
         '<span class="aigct-badge">VEP Performance Chat</span>'
         "</div>",
         unsafe_allow_html=True,
@@ -248,11 +246,11 @@ in the AIGCT platform — see the
             unsafe_allow_html=True,
         )
         for ex in EXAMPLES:
-            if st.button(ex["label"], use_container_width=True, key=f"sb_{ex['label']}"):
+            if st.button(ex["label"], width="stretch", key=f"sb_{ex['label']}"):
                 st.session_state.pending_prompt = ex["prompt"]
 
         st.divider()
-        if st.button("Clear conversation", use_container_width=True):
+        if st.button("Clear conversation", width="stretch"):
             st.session_state.messages = []
             st.session_state.history = []
             st.rerun()
