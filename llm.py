@@ -13,7 +13,8 @@ from openai import OpenAI
 
 import aigct_tools
 
-MODEL = "meta-llama/llama-3.1-8b-instruct"
+# MODEL = "meta-llama/llama-3.1-8b-instruct"
+MODEL = "google/gemini-2.5-flash-lite"
 MAX_TOKENS = 512  # tool-call turn; tool JSON is short
 MAX_TOKENS_SUMMARY = 1024  # summary turn; system prompt says 1-3 sentences
 
@@ -36,24 +37,51 @@ Rules:
 - If the user names a specific gene (e.g. PTEN, BRCA1), call \
 get_top_veps_for_task_gene with that gene as an uppercased official HGNC symbol.
 - Otherwise call get_top_veps_for_task for overall task performance.
+- Results contain ROC AUC and negative log10 mann-whitney u p-value for each VEP.
 - Results are ranked by ROC AUC descending; a higher AUC means better \
 discrimination of pathogenic from benign variants.
 - If you cannot confidently map the disease to a TASK_CODE, or a tool returns no \
 results (e.g. an unrecognized gene), ask the user to clarify rather than guessing.
 - The full results table is rendered to the user separately, so do NOT repeat the \
 whole table in your reply. Give a brief (1-3 sentence) summary naming the top few \
-VEPs and their AUCs, and note the task/gene you used.
+VEPs and their ROC AUCs and negative log10 mann-whitney u p-values, \
+and note the task/gene you used.
 - When user mentions only a disease without mentioning a gene provide the results
 for the overall task, not for any specific gene.
 - IMPORTANT: when calling a tool, arguments MUST be valid JSON enclosed in curly \
 braces. Never use any other format for tool arguments.
+- If the user asks for a disease area not in the list above, say you do not \
+have data for that disease and ask them to choose one of the supported \
+diseases. Suggest that you can query the clinvar task because it covers \
+many different disease areas. Use the exact phrase, do not have data, somewhere in your response. \
+Do NOT include any benchmark results in your reply.
 """
+
+
+_NO_DATA_PHRASES = (
+    "don't have data",
+    "do not have data",
+    "no data",
+    "not in the list",
+    "not supported",
+    "not one of the supported",
+    "not available for",
+    "cannot find data",
+    "no benchmark",
+)
+
+
+def _is_declining(text: str) -> bool:
+    """Return True if the summary text is refusing/declining the request."""
+    t = text.lower()
+    return any(phrase in t for phrase in _NO_DATA_PHRASES)
 
 
 def make_client(api_key: str) -> OpenAI:
     return OpenAI(
         api_key=api_key,
         base_url="https://openrouter.ai/api/v1",
+        timeout=60.0,
     )
 
 
@@ -111,8 +139,11 @@ def run_turn(client: OpenAI, messages: list, query_mgr):
     """
     tables = []
     has_tool_results = False
+    max_iterations = 6
+    iteration = 0
 
-    while True:
+    while iteration < max_iterations:
+        iteration += 1
         history = messages if has_tool_results else _user_facing_messages(messages)
         kwargs = dict(
             model=MODEL,
@@ -147,7 +178,7 @@ def run_turn(client: OpenAI, messages: list, query_mgr):
 
             text = msg.content or ""
             messages.append({"role": "assistant", "content": text})
-            return text, tables
+            return text, [] if _is_declining(text) else tables
 
         # Append the assistant turn carrying the tool calls (serializable form).
         messages.append(
@@ -186,3 +217,5 @@ def run_turn(client: OpenAI, messages: list, query_mgr):
                 }
             )
         has_tool_results = True
+
+    raise RuntimeError("Tool-use loop exceeded maximum iterations without a final answer.")
