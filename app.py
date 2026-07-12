@@ -152,7 +152,7 @@ def render_table(title: str, df):
     st.markdown(f'<p class="table-title">{title}</p>', unsafe_allow_html=True)
     st.dataframe(
         df,
-        width="stretch",
+        use_container_width=True,
         hide_index=True,
         column_config=_auc_column_config(df),
     )
@@ -274,6 +274,8 @@ in the AIGCT platform — see the
         st.markdown(prompt)
 
     st.session_state.messages.append({"role": "user", "content": prompt})
+    # Keep the last 20 messages to bound memory and API payload size.
+    st.session_state.messages = st.session_state.messages[-20:]
 
     with st.chat_message("assistant"):
         try:

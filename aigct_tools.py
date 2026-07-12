@@ -5,10 +5,10 @@ schemas and a serializer for tool results. Written so they could be lifted into
 a standalone MCP server later with no change to the query logic.
 
 The aigct query methods return lowercase columns:
-  - get_score_source_roc_auc_by_task(task_code)
-        -> score_source, auc, num_positive, num_negative
-  - get_score_source_gene_roc_auc_by_task_gene(task_code, gene_symbol)
-        -> score_source, gene_symbol, auc, num_positive, num_negative
+  - get_variant_effect_metrics_by_task(task_code)
+        -> score_source, auc, neg_log10_mwu_pval, num_positive, num_negative
+  - get_variant_effect_gene_metrics_by_task_gene(task_code, gene_symbol)
+        -> score_source, gene_symbol, auc, neg_log10_mwu_pval, num_positive, num_negative
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ _COLUMN_LABELS = {
     "score_source": "VEP",
     "gene_symbol": "Gene",
     "auc": "ROC AUC",
-    "num_positive": "Num Positive",
-    "num_negative": "Num Negative",
+    "neg_log10_mwu_pval": "-log10 Mann-W U pval",
+    "num_positive": "#Positive",
+    "num_negative": "#Negative",
 }
 
 
@@ -45,7 +46,7 @@ def _finalize(df: pd.DataFrame) -> pd.DataFrame:
 
 def get_top_veps_for_task(query_mgr, task_code: str) -> pd.DataFrame:
     """Top VEPs for a task, ranked by AUC descending."""
-    df = query_mgr.get_score_source_roc_auc_by_task(task_code)
+    df = query_mgr.get_variant_effect_metrics_by_task(task_code)
     return _finalize(df)
 
 
@@ -53,7 +54,7 @@ def get_top_veps_for_task_gene(
     query_mgr, task_code: str, gene_symbol: str
 ) -> pd.DataFrame:
     """Top VEPs for a specific gene within a task, ranked by AUC descending."""
-    df = query_mgr.get_score_source_gene_roc_auc_by_task_gene(task_code, gene_symbol)
+    df = query_mgr.get_variant_effect_gene_metrics_by_task_gene(task_code, gene_symbol)
     return _finalize(df)
 
 
@@ -116,11 +117,13 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "get_top_veps_for_task",
             "description": (
-                "Return the ranked performance (ROC AUC) of all variant effect "
+                "Return the ranked performance (ROC AUC), and negative log10 "
+                "mann-whitney u p-values, of all variant effect "
                 "predictors (VEPs / score sources) for a benchmark task, across "
                 "all genes in that task. The returned `auc` column contains ROC AUC "
-                "values. Use this when the user asks about overall performance "
-                "for a disease or task and does NOT name a specific gene."
+                "values. The returned `neg_log10_mwu_pval` column contains negative "
+                "log10 Mann-Whitney U p-values. Use this tool when the user asks about "
+                "overall performance for a disease or task and does NOT name a specific gene."
             ),
             "parameters": {
                 "type": "object",
@@ -143,7 +146,8 @@ TOOL_SCHEMAS = [
                 "Return the ranked performance (ROC AUC) of all variant effect "
                 "predictors (VEPs / score sources) for a specific gene within a "
                 "benchmark task. The returned `auc` column contains ROC AUC "
-                "values. Use this when the user names a specific gene "
+                "values. The returned `neg_log10_mwu_pval` column contains negative "
+                "log10 Mann-Whitney U p-values. Use this when the user names a specific gene "
                 "(e.g. PTEN, BRCA1)."
             ),
             "parameters": {
