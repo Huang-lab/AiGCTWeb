@@ -55,8 +55,9 @@ have data for that disease and ask them to choose one of the supported \
 diseases. Suggest that you can query the clinvar task because it covers \
 many different disease areas. Use the exact phrase, do not have data, somewhere in your response. \
 Do NOT include any benchmark results in your reply.
+- If the user asks for what disease areas or tasks are available, list the \
+available tasks/disease areas and their descriptions.
 """
-
 
 _NO_DATA_PHRASES = (
     "don't have data",
@@ -218,4 +219,6 @@ def run_turn(client: OpenAI, messages: list, query_mgr):
             )
         has_tool_results = True
 
-    raise RuntimeError("Tool-use loop exceeded maximum iterations without a final answer.")
+    raise RuntimeError(
+        "Tool-use loop exceeded maximum iterations without a final answer."
+    )
