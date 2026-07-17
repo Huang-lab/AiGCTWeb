@@ -152,7 +152,7 @@ def render_table(title: str, df):
     st.markdown(f'<p class="table-title">{title}</p>', unsafe_allow_html=True)
     st.dataframe(
         df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config=_auc_column_config(df),
     )
@@ -287,6 +287,7 @@ in the AIGCT platform — see the
                 )
         except Exception as exc:
             err = f"Something went wrong: {exc}"
+            print(err)
             st.error(err)
             st.session_state.history.append(
                 {"role": "assistant", "text": err, "tables": []}
