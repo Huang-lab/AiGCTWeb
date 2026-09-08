@@ -94,12 +94,58 @@ The diagram above is a true PNG image showing the component flow and message exc
   - Provides the only persistent data source in the application.
   - Stored locally and committed for reproducible deployment.
 
-## Deployment Notes
+## Deployment Instructions
 
-- The app uses the vendored `aigct` wheel from `vendor/aigct-1.0.1-py3-none-any.whl`.
-- `requirements.txt` installs dependencies including Streamlit, OpenRouter client, and the bundled `aigct` package.
-- `app.py` is the Streamlit entry point and serves at `localhost:8501`.
-- Local secrets are loaded from `.streamlit/secrets.toml`.
+### Prerequisites
+
+- Python 3.10
+- `uv` package manager
+- An OpenRouter API key (free tier is sufficient)
+
+### Local development
+
+1. **Create and populate the virtual environment:**
+
+   ```bash
+   VIRTUAL_ENV=.venv_aigweb uv pip install -r requirements.txt
+   ```
+
+   This installs Streamlit, the OpenAI client, pandas, and the vendored `aigct` wheel
+   from `vendor/aigct-1.0.1-py3-none-any.whl`. Do not use `pip` directly.
+
+2. **Set the API key** by creating `.streamlit/secrets.toml` (gitignored):
+
+   ```toml
+   OPENROUTER_API_KEY = "sk-or-..."
+   ```
+
+3. **Run the app:**
+
+   ```bash
+   .venv_aigweb/bin/python -m streamlit run app.py
+   ```
+
+   The app is served at `http://localhost:8501`.
+
+### Streamlit Community Cloud
+
+1. **Commit required assets** — the following must be present in the repository:
+   - `db/aigct.db` — the bundled SQLite benchmark database (~6 MB)
+   - `vendor/aigct-1.0.1-py3-none-any.whl` — the vendored `aigct` wheel
+   - `requirements.txt` — references the wheel by relative path (`./vendor/...`)
+   - `aigct.yaml` — `aigct` configuration (db path, log dirs, plot block)
+
+2. **Configure secrets** in the Streamlit Cloud app settings (Secrets UI):
+
+   ```toml
+   OPENROUTER_API_KEY = "sk-or-..."
+   ```
+
+3. **Set the entry point** to `app.py` in the Streamlit Cloud dashboard.
+
+4. Streamlit Cloud will install dependencies from `requirements.txt` at build time,
+   including the vendored wheel, and the app will be available at
+   `https://<your-app>.streamlit.app/`.
 
 ## Key Architectural Patterns
 

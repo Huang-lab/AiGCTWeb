@@ -134,16 +134,30 @@ def get_client():
     return llm.make_client(st.secrets["OPENROUTER_API_KEY"])
 
 
-def _auc_column_config(df):
+def _column_config(df):
     """Return column_config for st.dataframe, adding a progress bar for ROC AUC."""
     cfg = {}
     if "ROC AUC" in df.columns:
         cfg["ROC AUC"] = st.column_config.ProgressColumn(
             "ROC AUC",
-            help="Area under the ROC curve (0.5 = random, 1.0 = perfect)",
+            help=(
+                "Area under the ROC curve (0.5 = random, 1.0 = perfect). "
+                "Helpful for finding the most predictive VEPs"
+            ),
             min_value=0.5,
             max_value=1.0,
             format="%.4f",
+        )
+    if "-log10 Mann-W U pval" in df.columns:
+        cfg["-log10 Mann-W U pval"] = st.column_config.NumberColumn(
+            "-log10 Mann-W U pval",
+            help=(
+                "Negative log10 of the Mann-Whitney U test p-value comparing "
+                "pathogenic vs. benign variant scores. Higher values indicate "
+                "stronger statistical separation. It is particularly helpful "
+                "for de novo mutations."
+            ),
+            format="%.2f",
         )
     return cfg
 
@@ -154,7 +168,7 @@ def render_table(title: str, df):
         df,
         width="stretch",
         hide_index=True,
-        column_config=_auc_column_config(df),
+        column_config=_column_config(df),
     )
 
 
@@ -229,6 +243,12 @@ spectrum of genomics-based precision medicine.
 
 It lets you ask in natural English about the performance of publicly available
 variant effect predictors (VEPs) for various disease areas and genes.
+
+It displays both the area under the ROC curve (AUC ROC), helpful for finding
+the most predictive VEPs, and the negative log10 Mann-Whitney U test p-value
+comparing pathogenic vs. benign variant scores with higher values indicating
+stronger statistical separation, particularly helpful for identifying
+de novo mutations.
 
 **Disease areas covered:** Cancer, Alzheimer's & related dementias, ClinVar,
 Autism spectrum disorder, Congenital heart disease, Developmental disorders.
